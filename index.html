@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP数据包捕获工具</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+    <!-- 自定义配置 -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        accent: '#6366F1',
+                        danger: '#EF4444',
+                        dark: '#1E293B',
+                        light: '#F8FAFC'
+                    },
+                    fontFamily: {
+                        inter: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                },
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .card-shadow {
+                box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.1), 0 8px 10px -6px rgba(59, 130, 246, 0.1);
+            }
+            .gradient-bg {
+                background: linear-gradient(135deg, #3B82F6 0%, #6366F1 100%);
+            }
+            .scrollbar-thin {
+                scrollbar-width: thin;
+            }
+            .scrollbar-thin::-webkit-scrollbar {
+                width: 4px;
+                height: 4px;
+            }
+            .scrollbar-thin::-webkit-scrollbar-thumb {
+                background-color: rgba(59, 130, 246, 0.5);
+                border-radius: 2px;
+            }
+        }
+    </style>
+</head>
+<body class="font-inter bg-gray-50 text-gray-800 min-h-screen">
+    <!-- 顶部导航栏 -->
+    <header class="gradient-bg text-white shadow-lg">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <i class="fa fa-server text-2xl"></i>
+                <h1 class="text-2xl font-bold tracking-tight">HTTP数据包捕获工具</h1>
+            </div>
+            <div class="hidden md:flex items-center space-x-4">
+                <span id="api-status" class="flex items-center text-sm bg-white/20 px-3 py-1 rounded-full">
+                    <i class="fa fa-circle text-xs mr-2 opacity-70"></i>
+                    <span>API连接状态: 未连接</span>
+                </span>
+                <button id="refresh-btn" class="bg-white/20 hover:bg-white/30 transition-all px-3 py-1 rounded-lg flex items-center">
+                    <i class="fa fa-refresh mr-2"></i>
+                    <span>刷新</span>
+                </button>
+            </div>
+            <button id="mobile-menu-btn" class="md:hidden text-white">
+                <i class="fa fa-bars text-xl"></i>
+            </button>
+        </div>
+        <!-- 移动端菜单 -->
+        <div id="mobile-menu" class="hidden md:hidden bg-white/10 backdrop-blur-sm">
+            <div class="container mx-auto px-4 py-3 space-y-3">
+                <span id="mobile-api-status" class="flex items-center text-sm bg-white/20 px-3 py-1 rounded-full">
+                    <i class="fa fa-circle text-xs mr-2 opacity-70"></i>
+                    <span>API连接状态: 未连接</span>
+                </span>
+                <button id="mobile-refresh-btn" class="bg-white/20 hover:bg-white/30 transition-all px-3 py-1 rounded-lg flex items-center">
+                    <i class="fa fa-refresh mr-2"></i>
+                    <span>刷新</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主内容区 -->
+    <main class="container mx-auto px-4 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- 左侧面板：设备选择和抓包配置 -->
+            <div class="lg:col-span-1 space-y-6">
+                <!-- 设备选择卡片 -->
+                <div class="bg-white rounded-xl shadow-md card-shadow overflow-hidden transition-all hover:shadow-xl">
+                    <div class="bg-primary/10 px-6 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-network-wired text-primary mr-2"></i>
+                            网卡设备选择
+                        </h2>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div id="devices-loading" class="hidden flex justify-center items-center py-4">
+                            <i class="fa fa-spinner fa-spin text-primary mr-2"></i>
+                            <span>正在加载设备列表...</span>
+                        </div>
+                        <div id="devices-error" class="hidden bg-red-50 text-red-600 p-3 rounded-lg text-sm border border-red-100">
+                            <i class="fa fa-exclamation-circle mr-2"></i>
+                            <span>加载设备列表失败</span>
+                        </div>
+                        <select id="device-select" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all appearance-none bg-white">
+                            <option value="">-- 请选择网卡设备 --</option>
+                        </select>
+                        <div class="text-sm text-gray-500">
+                            <i class="fa fa-info-circle mr-1"></i>
+                            <span>提示：选择正确的网卡设备以开始捕获数据包</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 抓包配置卡片 -->
+                <div class="bg-white rounded-xl shadow-md card-shadow overflow-hidden transition-all hover:shadow-xl">
+                    <div class="bg-secondary/10 px-6 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-sliders text-secondary mr-2"></i>
+                            抓包配置
+                        </h2>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <!-- 协议过滤 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">协议过滤</label>
+                            <select id="protocol-filter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all">
+                                <option value="">所有协议</option>
+                                <option value="http" selected>仅HTTP</option>
+                            </select>
+                        </div>
+
+                        <!-- 路径过滤 -->
+                        <div>
+                            <label for="path-filter" class="block text-sm font-medium text-gray-700 mb-1">URL路径过滤</label>
+                            <input type="text" id="path-filter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all" placeholder="例如: /api/users">
+                            <p class="mt-1 text-xs text-gray-500">留空则不过滤路径</p>
+                        </div>
+
+                        <!-- 内容过滤 -->
+                        <div>
+                            <label for="content-filter" class="block text-sm font-medium text-gray-700 mb-1">内容包含过滤</label>
+                            <input type="text" id="content-filter" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all" placeholder="例如: username">
+                            <p class="mt-1 text-xs text-gray-500">留空则不过滤内容</p>
+                        </div>
+
+                        <!-- 高级配置（可折叠） -->
+                        <div>
+                            <button id="advanced-toggle" class="flex items-center text-primary hover:text-primary/80 transition-colors text-sm">
+                                <i class="fa fa-chevron-down mr-1 transition-transform duration-300"></i>
+                                <span>高级配置</span>
+                            </button>
+                            <div id="advanced-config" class="hidden mt-3 space-y-3">
+                                <!-- 数据包长度 -->
+                                <div>
+                                    <label for="snapshot-len" class="block text-sm font-medium text-gray-700 mb-1">数据包捕获长度</label>
+                                    <input type="number" id="snapshot-len" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all" value="1024" min="64" max="65535">
+                                </div>
+
+                                <!-- 混杂模式 -->
+                                <div class="flex items-center space-x-2">
+                                    <input type="checkbox" id="promiscuous" class="rounded border-gray-300 text-primary focus:ring-primary/50">
+                                    <label for="promiscuous" class="text-sm font-medium text-gray-700">开启混杂模式</label>
+                                </div>
+
+                                <!-- 超时时间 -->
+                                <div>
+                                    <label for="timeout" class="block text-sm font-medium text-gray-700 mb-1">超时时间（秒）</label>
+                                    <input type="number" id="timeout" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all" value="30" min="1" max="300">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="space-y-3">
+                    <button id="start-capture-btn" class="w-full bg-primary hover:bg-primary/90 text-white font-medium py-3 px-4 rounded-lg shadow transition-all flex justify-center items-center">
+                        <i class="fa fa-play mr-2"></i>
+                        <span>开始抓包</span>
+                    </button>
+                    <button id="stop-capture-btn" class="w-full bg-danger hover:bg-danger/90 text-white font-medium py-3 px-4 rounded-lg shadow transition-all flex justify-center items-center hidden">
+                        <i class="fa fa-stop mr-2"></i>
+                        <span>停止抓包</span>
+                    </button>
+                    <button id="clear-results-btn" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium py-2 px-4 rounded-lg shadow transition-all flex justify-center items-center">
+                        <i class="fa fa-trash mr-2"></i>
+                        <span>清空结果</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 右侧面板：抓包状态和结果 -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- 任务状态卡片 -->
+                <div class="bg-white rounded-xl shadow-md card-shadow overflow-hidden transition-all hover:shadow-xl">
+                    <div class="bg-accent/10 px-6 py-4 border-b border-gray-100">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-tasks text-accent mr-2"></i>
+                            任务状态
+                        </h2>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div id="no-task-status" class="flex flex-col items-center justify-center py-6 text-center text-gray-500">
+                            <i class="fa fa-info-circle text-4xl mb-3 text-gray-300"></i>
+                            <p>尚未开始任何抓包任务</p>
+                            <p class="text-sm mt-1">请选择网卡设备并点击"开始抓包"按钮</p>
+                        </div>
+                        <div id="task-status" class="hidden space-y-3">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <!-- 任务ID -->
+                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                    <p class="text-xs uppercase text-gray-500 font-semibold mb-1">任务ID</p>
+                                    <p id="task-id-display" class="text-sm font-mono bg-white px-2 py-1 rounded truncate"></p>
+                                </div>
+                                <!-- 开始时间 -->
+                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                    <p class="text-xs uppercase text-gray-500 font-semibold mb-1">开始时间</p>
+                                    <p id="start-time-display" class="text-sm"></p>
+                                </div>
+                                <!-- 捕获数量 -->
+                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                    <p class="text-xs uppercase text-gray-500 font-semibold mb-1">已捕获数据包</p>
+                                    <p id="packet-count-display" class="text-sm font-bold text-primary"><span id="packet-count">0</span> 个</p>
+                                </div>
+                                <!-- 运行状态 -->
+                                <div class="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                    <p class="text-xs uppercase text-gray-500 font-semibold mb-1">运行状态</p>
+                                    <p id="running-status-display" class="text-sm"><span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">运行中</span></p>
+                                </div>
+                            </div>
+                            <!-- 实时统计 -->
+                            <div class="mt-4">
+                                <p class="text-xs uppercase text-gray-500 font-semibold mb-2">捕获速率统计</p>
+                                <div class="h-48">
+                                    <canvas id="capture-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 抓包结果表格 -->
+                <div class="bg-white rounded-xl shadow-md card-shadow overflow-hidden transition-all hover:shadow-xl">
+                    <div class="bg-dark/5 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+                        <h2 class="text-lg font-semibold flex items-center">
+                            <i class="fa fa-list-alt text-dark mr-2"></i>
+                            抓包结果
+                        </h2>
+                        <div class="flex items-center space-x-2">
+                            <div class="relative">
+                                <input type="text" id="search-results" class="pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all" placeholder="搜索结果...">
+                                <i class="fa fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+                            </div>
+                            <select id="filter-results" class="text-sm px-2 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all">
+                                <option value="all">全部</option>
+                                <option value="get">GET请求</option>
+                                <option value="post">POST请求</option>
+                                <option value="other">其他请求</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full min-w-[800px]">
+                            <thead class="bg-gray-50 border-b border-gray-200">
+                                <tr>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">时间戳</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">源IP:端口</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">目标IP:端口</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">请求</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">主机</th>
+                                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-table-body" class="divide-y divide-gray-200">
+                                <!-- 表格为空时的占位符 -->
+                                <tr id="empty-results" class="">
+                                    <td colspan="6" class="px-4 py-12 text-center text-gray-500">
+                                        <i class="fa fa-inbox text-4xl mb-3 text-gray-300"></i>
+                                        <p>暂无抓包结果</p>
+                                        <p class="text-sm mt-1">开始抓包后将在此显示捕获的数据包</p>
+                                    </td>
+                                </tr>
+                                <!-- 表格数据将通过JavaScript动态添加 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 数据包详情模态框 -->
+    <div id="packet-detail-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h3 class="text-lg font-semibold">数据包详情</h3>
+                <button id="close-modal-btn" class="text-gray-500 hover:text-gray-700">
+                    <i class="fa fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto scrollbar-thin flex-grow">
+                <div id="packet-detail-content" class="space-y-4">
+                    <!-- 数据包详情将通过JavaScript动态添加 -->
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-gray-200 flex justify-end">
+                <button id="close-detail-btn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-medium py-2 px-4 rounded-lg transition-all">
+                    关闭
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载中遮罩 -->
+    <div id="loading-overlay" class="fixed inset-0 bg-white/80 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
+            <h3 class="text-lg font-semibold mb-2" id="loading-text">正在处理...</h3>
+            <p class="text-gray-500 text-sm" id="loading-subtext">请稍候...</p>
+        </div>
+    </div>
+
+    <!-- 通知消息组件 -->
+    <div id="notification" class="fixed bottom-4 right-4 max-w-sm w-full bg-white rounded-lg shadow-lg border-l-4 border-primary p-4 transform translate-y-20 opacity-0 transition-all duration-300 z-50 flex items-start">
+        <div id="notification-icon" class="flex-shrink-0 mt-0.5">
+            <i class="fa fa-info-circle text-primary text-xl"></i>
+        </div>
+        <div class="ml-3 w-0 flex-1 pt-0.5">
+            <p id="notification-title" class="text-sm font-medium text-gray-800">通知标题</p>
+            <p id="notification-message" class="mt-1 text-sm text-gray-500">通知内容将显示在这里...</p>
+        </div>
+        <button id="close-notification" class="ml-4 flex-shrink-0 text-gray-400 hover:text-gray-500 focus:outline-none">
+            <i class="fa fa-times"></i>
+        </button>
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+        // 全局变量
+        let currentTaskId = null;
+        let captureInterval = null;
+        let captureChart = null;
+        let packetRateData = [];
+        let packetRateLabels = [];
+        let lastPacketCount = 0;
+        let startTime = null;
+
+        // DOM元素
+        const deviceSelect = document.getElementById('device-select');
+        const startCaptureBtn = document.getElementById('start-capture-btn');
+        const stopCaptureBtn = document.getElementById('stop-capture-btn');
+        const clearResultsBtn = document.getElementById('clear-results-btn');
+        const resultsTableBody = document.getElementById('results-table-body');
+        const emptyResults = document.getElementById('empty-results');
+        const taskStatus = document.getElementById('task-status');
+        const noTaskStatus = document.getElementById('no-task-status');
+        const taskIdDisplay = document.getElementById('task-id-display');
+        const startTimeDisplay = document.getElementById('start-time-display');
+        const packetCountDisplay = document.getElementById('packet-count');
+        const runningStatusDisplay = document.getElementById('running-status-display');
+        const packetDetailModal = document.getElementById('packet-detail-modal');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        const closeDetailBtn = document.getElementById('close-detail-btn');
+        const packetDetailContent = document.getElementById('packet-detail-content');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        const loadingSubtext = document.getElementById('loading-subtext');
+        const notification = document.getElementById('notification');
+        const notificationTitle = document.getElementById('notification-title');
+        const notificationMessage = document.getElementById('notification-message');
+        const notificationIcon = document.getElementById('notification-icon');
+        const closeNotification = document.getElementById('close-notification');
+        const apiStatus = document.getElementById('api-status');
+        const mobileApiStatus = document.getElementById('mobile-api-status');
+        const refreshBtn = document.getElementById('refresh-btn');
+        const mobileRefreshBtn = document.getElementById('mobile-refresh-btn');
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+        const advancedToggle = document.getElementById('advanced-toggle');
+        const advancedConfig = document.getElementById('advanced-config');
+        const searchResults = document.getElementById('search-results');
+        const filterResults = document.getElementById('filter-results');
+        const devicesLoading = document.getElementById('devices-loading');
+        const devicesError = document.getElementById('devices-error');
+
+        // API基础URL
+        const API_BASE_URL = 'http://localhost:8080';
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            // 加载设备列表
+            loadDevices();
+            // 初始化图表
+            initChart();
+            // 绑定事件监听
+            bindEvents();
+            // 检查API连接状态
+            checkApiConnection();
+        });
+
+        // 绑定事件监听
+        function bindEvents() {
+            // 开始抓包按钮
+            startCaptureBtn.addEventListener('click', startCapture);
+            // 停止抓包按钮
+            stopCaptureBtn.addEventListener('click', stopCapture);
+            // 清空结果按钮
+            clearResultsBtn.addEventListener('click', clearResults);
+            // 关闭模态框按钮
+            closeModalBtn.addEventListener('click', closeModal);
+            closeDetailBtn.addEventListener('click', closeModal);
+            // 点击模态框外部关闭
+            packetDetailModal.addEventListener('click', (e) => {
+                if (e.target === packetDetailModal) closeModal();
+            });
+            // 关闭通知
+            closeNotification.addEventListener('click', hideNotification);
+            // 刷新按钮
+            refreshBtn.addEventListener('click', refreshPage);
+            mobileRefreshBtn.addEventListener('click', refreshPage);
+            // 移动端菜单
+            mobileMenuBtn.addEventListener('click', toggleMobileMenu);
+            // 高级配置切换
+            advancedToggle.addEventListener('click', toggleAdvancedConfig);
+            // 搜索和过滤
+            searchResults.addEventListener('input', filterTableResults);
+            filterResults.addEventListener('change', filterTableResults);
+        }
+
+        // 加载网卡设备列表
+        function loadDevices() {
+            // 显示加载状态
+            devicesLoading.classList.remove('hidden');
+            deviceSelect.innerHTML = '<option value="">-- 加载中... --</option>';
+            devicesError.classList.add('hidden');
+
+            fetch(`${API_BASE_URL}/devices`)
+                .then(response => {
+                    if (!response.ok) throw new Error('加载设备列表失败');
+                    return response.json();
+                })
+                .then(data => {
+                    // 隐藏加载状态
+                    devicesLoading.classList.add('hidden');
+                    
+                    // 清空选择框
+                    deviceSelect.innerHTML = '<option value="">-- 请选择网卡设备 --</option>';
+                    
+                    // 添加设备选项
+                    if (data.devices && data.devices.length > 0) {
+                        data.devices.forEach(device => {
+                            const option = document.createElement('option');
+                            option.value = device;
+                            option.textContent = device;
+                            deviceSelect.appendChild(option);
+                        });
+                    } else {
+                        // 没有设备
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = '-- 未找到可用网卡设备 --';
+                        option.disabled = true;
+                        deviceSelect.appendChild(option);
+                    }
+                })
+                .catch(error => {
+                    // 显示错误状态
+                    devicesLoading.classList.add('hidden');
+                    devicesError.classList.remove('hidden');
+                    devicesError.querySelector('span:last-child').textContent = error.message;
+                    
+                    // 清空选择框
+                    deviceSelect.innerHTML = '<option value="">-- 加载设备失败 --</option>';
+                    deviceSelect.disabled = true;
+                    
+                    // 显示错误通知
+                    showNotification('错误', '加载网卡设备列表失败，请检查API服务是否正常运行。', 'error');
+                });
+        }
+
+        // 开始抓包
+        function startCapture() {
+            // 验证设备选择
+            const deviceName = deviceSelect.value;
+            if (!deviceName) {
+                showNotification('提示', '请先选择网卡设备', 'warning');
+                return;
+            }
+
+            // 获取配置参数
+            const protocols = document.getElementById('protocol-filter').value ? [document.getElementById('protocol-filter').value] : [];
+            const pathFilter = document.getElementById('path-filter').value;
+            const containsFilter = document.getElementById('content-filter').value;
+            const snapshotLen = parseInt(document.getElementById('snapshot-len').value) || 1024;
+            const promiscuous = document.getElementById('promiscuous').checked;
+            const timeout = parseInt(document.getElementById('timeout').value) || 30;
+
+            // 显示加载状态
+            showLoading('正在开始抓包', '正在配置网卡设备并启动抓包任务...');
+
+            // 构建请求体
+            const config = {
+                device_name: deviceName,
+                protocols: protocols,
+                path_filter: pathFilter,
+                contains_filter: containsFilter,
+                snapshot_len: snapshotLen,
+                promiscuous: promiscuous,
+                timeout: timeout
+            };
+
+            // 发送请求
+            fetch(`${API_BASE_URL}/capture/start`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(config)
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('启动抓包任务失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // 隐藏加载状态
+                    hideLoading();
+
+                    // 保存任务ID
+                    currentTaskId = data.task_id;
+                    startTime = new Date();
+                    lastPacketCount = 0;
+                    packetRateData = [];
+                    packetRateLabels = [];
+
+                    // 更新UI
+                    updateTaskStatusUI();
+                    startCaptureBtn.classList.add('hidden');
+                    stopCaptureBtn.classList.remove('hidden');
+                    deviceSelect.disabled = true;
+
+                    // 显示成功通知
+                    showNotification('成功', '抓包任务已成功启动', 'success');
+
+                    // 开始定期获取结果
+                    startPollingResults();
+                })
+                .catch(error => {
+                    // 隐藏加载状态
+                    hideLoading();
+                    
+                    // 显示错误通知
+                    showNotification('错误', '启动抓包任务失败: ' + error.message, 'error');
+                });
+        }
+
+        // 停止抓包
+        function stopCapture() {
+            if (!currentTaskId) return;
+
+            // 显示加载状态
+            showLoading('正在停止抓包', '正在关闭网卡设备并保存结果...');
+
+            // 发送请求
+            fetch(`${API_BASE_URL}/capture/stop/${currentTaskId}`, {
+                method: 'POST'
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('停止抓包任务失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // 隐藏加载状态
+                    hideLoading();
+
+                    // 停止轮询
+                    stopPollingResults();
+
+                    // 更新UI
+                    runningStatusDisplay.innerHTML = '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">已停止</span>';
+                    startCaptureBtn.classList.remove('hidden');
+                    stopCaptureBtn.classList.add('hidden');
+                    deviceSelect.disabled = false;
+
+                    // 显示成功通知
+                    showNotification('成功', `抓包任务已停止，共捕获 ${data.captured_packets} 个数据包`, 'success');
+                })
+                .catch(error => {
+                    // 隐藏加载状态
+                    hideLoading();
+                    
+                    // 显示错误通知
+                    showNotification('错误', '停止抓包任务失败: ' + error.message, 'error');
+                });
+        }
+
+        // 清空结果
+        function clearResults() {
+            // 清空表格
+            resultsTableBody.innerHTML = '';
+            emptyResults.classList.remove('hidden');
+            
+            // 重置计数
+            packetCountDisplay.textContent = '0';
+            lastPacketCount = 0;
+            
+            // 显示通知
+            showNotification('提示', '抓包结果已清空', 'info');
+        }
+
+        // 开始轮询结果
+        function startPollingResults() {
+            // 立即获取一次结果
+            fetchCaptureResults();
+            
+            // 设置定时器定期获取结果
+            captureInterval = setInterval(fetchCaptureResults, 2000);
+        }
+
+        // 停止轮询结果
+        function stopPollingResults() {
+            if (captureInterval) {
+                clearInterval(captureInterval);
+                captureInterval = null;
+            }
+        }
+
+        // 获取抓包结果
+        function fetchCaptureResults() {
+            if (!currentTaskId) return;
+
+            fetch(`${API_BASE_URL}/capture/results/${currentTaskId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取抓包结果失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    // 更新数据包计数
+                    const newPacketCount = data.count || 0;
+                    packetCountDisplay.textContent = newPacketCount.toString();
+
+                    // 更新图表数据（计算捕获速率）
+                    if (newPacketCount > lastPacketCount) {
+                        const now = new Date();
+                        const timeStr = now.toLocaleTimeString();
+                        const rate = newPacketCount - lastPacketCount;
+                        
+                        packetRateLabels.push(timeStr);
+                        packetRateData.push(rate);
+                        
+                        // 保持数据点不超过20个
+                        if (packetRateData.length > 20) {
+                            packetRateData.shift();
+                            packetRateLabels.shift();
+                        }
+                        
+                        updateChart();
+                        lastPacketCount = newPacketCount;
+                    }
+
+                    // 更新表格数据
+                    if (data.packets && data.packets.length > 0) {
+                        updateResultsTable(data.packets);
+                    }
+
+                    // 检查任务是否已停止
+                    if (data.running === false && stopCaptureBtn.classList.contains('hidden') === false) {
+                        runningStatusDisplay.innerHTML = '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">已停止</span>';
+                        startCaptureBtn.classList.remove('hidden');
+                        stopCaptureBtn.classList.add('hidden');
+                        deviceSelect.disabled = false;
+                        stopPollingResults();
+                    }
+                })
+                .catch(error => {
+                    // 忽略错误，避免频繁提示
+                    console.error('获取抓包结果失败:', error);
+                });
+        }
+
+        // 更新结果表格
+        function updateResultsTable(packets) {
+            // 隐藏空状态
+            emptyResults.classList.add('hidden');
+            
+            // 清空表格
+            resultsTableBody.innerHTML = '';
+            
+            // 添加数据行
+            packets.forEach(packet => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50 transition-colors';
+                row.dataset.packetData = JSON.stringify(packet);
+                
+                // 格式化时间戳
+                const timestamp = new Date(packet.timestamp).toLocaleString('zh-CN');
+                
+                // 提取请求方法
+                const requestMethod = packet.request_line.split(' ')[0] || '';
+                const requestPath = packet.path || '';
+                
+                // 根据请求方法设置不同颜色
+                let methodClass = 'bg-gray-100 text-gray-800';
+                if (requestMethod === 'GET') methodClass = 'bg-blue-100 text-blue-800';
+                else if (requestMethod === 'POST') methodClass = 'bg-green-100 text-green-800';
+                else if (requestMethod === 'PUT') methodClass = 'bg-yellow-100 text-yellow-800';
+                else if (requestMethod === 'DELETE') methodClass = 'bg-red-100 text-red-800';
+                
+                row.innerHTML = `
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${timestamp}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${packet.source_ip}:${packet.source_port}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${packet.dest_ip}:${packet.dest_port}</td>
+                    <td class="px-4 py-3 text-sm">
+                        <div class="flex items-center space-x-2">
+                            <span class="inline-block px-2 py-0.5 rounded text-xs font-medium ${methodClass}">${requestMethod}</span>
+                            <span class="text-gray-700 truncate max-w-[200px]">${requestPath}</span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${packet.host}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                        <button class="view-details-btn text-primary hover:text-primary/80 transition-colors">
+                            详情
+                        </button>
+                    </td>
+                `;
+                
+                resultsTableBody.appendChild(row);
+            });
+            
+            // 为详情按钮绑定事件
+            document.querySelectorAll('.view-details-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const row = e.target.closest('tr');
+                    const packetData = JSON.parse(row.dataset.packetData);
+                    showPacketDetails(packetData);
+                });
+            });
+        }
+
+        // 显示数据包详情
+        function showPacketDetails(packet) {
+            // 清空详情内容
+            packetDetailContent.innerHTML = '';
+            
+            // 创建详情内容
+            const detailsHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- 基本信息 -->
+                    <div class="space-y-2">
+                        <h4 class="font-medium text-gray-900">基本信息</h4>
+                        <div class="grid grid-cols-1 gap-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">时间戳:</span>
+                                <span>${new Date(packet.timestamp).toLocaleString('zh-CN', { 
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    second: '2-digit',
+                                    fractionalSecondDigits: 3
+                                })}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">源IP:</span>
+                                <span class="font-medium">${packet.source_ip}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">源端口:</span>
+                                <span>${packet.source_port}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">目标IP:</span>
+                                <span class="font-medium">${packet.dest_ip}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">目标端口:</span>
+                                <span>${packet.dest_port}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">协议:</span>
+                                <span>${packet.protocol}</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- HTTP信息 -->
+                    <div class="space-y-2">
+                        <h4 class="font-medium text-gray-900">HTTP信息</h4>
+                        <div class="grid grid-cols-1 gap-2 text-sm">
+                            <div class="flex justify-between items-start">
+                                <span class="text-gray-500">请求行:</span>
+                                <span class="text-left font-mono text-xs bg-gray-50 px-2 py-1 rounded">${packet.request_line}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">主机:</span>
+                                <span class="font-medium">${packet.host}</span>
+                            </div>
+                            <div class="flex justify-between items-start">
+                                <span class="text-gray-500">路径:</span>
+                                <span class="text-left font-mono text-xs bg-gray-50 px-2 py-1 rounded">${packet.path}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 请求内容 -->
+                <div class="mt-6">
+                    <h4 class="font-medium text-gray-900 mb-2">请求内容</h4>
+                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 font-mono text-xs h-48 overflow-auto scrollbar-thin">
+                        ${escapeHTML(packet.content || '(无内容)')}
+                    </div>
+                </div>
+            `;
+            
+            packetDetailContent.innerHTML = detailsHTML;
+            
+            // 显示模态框
+            packetDetailModal.classList.remove('hidden');
+        }
+
+        // 关闭模态框
+        function closeModal() {
+            packetDetailModal.classList.add('hidden');
+        }
+
+        // 更新任务状态UI
+        function updateTaskStatusUI() {
+            if (!currentTaskId) return;
+            
+            // 显示任务状态，隐藏无任务状态
+            taskStatus.classList.remove('hidden');
+            noTaskStatus.classList.add('hidden');
+            
+            // 更新任务信息
+            taskIdDisplay.textContent = currentTaskId;
+            startTimeDisplay.textContent = startTime.toLocaleString('zh-CN');
+            packetCountDisplay.textContent = '0';
+            runningStatusDisplay.innerHTML = '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">运行中</span>';
+        }
+
+        // 初始化图表
+        function initChart() {
+            const ctx = document.getElementById('capture-chart').getContext('2d');
+            
+            captureChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: packetRateLabels,
+                    datasets: [{
+                        label: '捕获速率 (包/秒)',
+                        data: packetRateData,
+                        borderColor: '#3B82F6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true,
+                        pointRadius: 3,
+                        pointBackgroundColor: '#3B82F6'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 0
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    }
+                }
+            });
+        }
+
+        // 更新图表
+        function updateChart() {
+            if (!captureChart) return;
+            
+            captureChart.data.labels = packetRateLabels;
+            captureChart.data.datasets[0].data = packetRateData;
+            captureChart.update();
+        }
+
+        // 过滤表格结果
+        function filterTableResults() {
+            const searchTerm = searchResults.value.toLowerCase();
+            const filterType = filterResults.value;
+            const rows = resultsTableBody.querySelectorAll('tr:not(#empty-results)');
+            
+            let visibleCount = 0;
+            
+            rows.forEach(row => {
+                const packetData = JSON.parse(row.dataset.packetData);
+                const requestMethod = packetData.request_line.split(' ')[0]?.toLowerCase() || '';
+                const fullText = `${packetData.source_ip} ${packetData.dest_ip} ${packetData.host} ${packetData.path} ${packetData.request_line} ${packetData.content}`.toLowerCase();
+                
+                // 检查搜索条件
+                const matchesSearch = searchTerm === '' || fullText.includes(searchTerm);
+                
+                // 检查过滤条件
+                let matchesFilter = true;
+                if (filterType === 'get') matchesFilter = requestMethod === 'get';
+                else if (filterType === 'post') matchesFilter = requestMethod === 'post';
+                else if (filterType === 'other') matchesFilter = requestMethod !== 'get' && requestMethod !== 'post';
+                
+                // 应用过滤
+                if (matchesSearch && matchesFilter) {
+                    row.classList.remove('hidden');
+                    visibleCount++;
+                } else {
+                    row.classList.add('hidden');
+                }
+            });
+            
+            // 显示或隐藏空状态
+            const hasVisibleResults = visibleCount > 0;
+            emptyResults.classList.toggle('hidden', hasVisibleResults);
+        }
+
+        // 检查API连接状态
+        function checkApiConnection() {
+            fetch(`${API_BASE_URL}/devices`, { method: 'GET' })
+                .then(response => {
+                    // 更新API状态
+                    updateApiStatus(true);
+                })
+                .catch(error => {
+                    // 更新API状态
+                    updateApiStatus(false);
+                    
+                    // 显示错误通知
+                    showNotification('警告', '无法连接到API服务，请确保服务已启动并运行在 http://localhost:8080', 'warning');
+                });
+        }
+
+        // 更新API状态显示
+        function updateApiStatus(isConnected) {
+            const statusIcon = apiStatus.querySelector('i');
+            const statusText = apiStatus.querySelector('span');
+            
+            const mobileStatusIcon = mobileApiStatus.querySelector('i');
+            const mobileStatusText = mobileApiStatus.querySelector('span');
+            
+            if (isConnected) {
+                statusIcon.className = 'fa fa-circle text-xs mr-2 text-green-500';
+                statusText.textContent = 'API连接状态: 已连接';
+                
+                mobileStatusIcon.className = 'fa fa-circle text-xs mr-2 text-green-500';
+                mobileStatusText.textContent = 'API连接状态: 已连接';
+            } else {
+                statusIcon.className = 'fa fa-circle text-xs mr-2 text-red-500';
+                statusText.textContent = 'API连接状态: 未连接';
+                
+                mobileStatusIcon.className = 'fa fa-circle text-xs mr-2 text-red-500';
+                mobileStatusText.textContent = 'API连接状态: 未连接';
+            }
+        }
+
+        // 刷新页面
+        function refreshPage() {
+            // 重新加载设备列表
+            loadDevices();
+            
+            // 检查API连接状态
+            checkApiConnection();
+            
+            // 显示通知
+            showNotification('提示', '页面已刷新', 'info');
+        }
+
+        // 切换移动端菜单
+        function toggleMobileMenu() {
+            mobileMenu.classList.toggle('hidden');
+        }
+
+        // 切换高级配置
+        function toggleAdvancedConfig() {
+            const icon = advancedToggle.querySelector('i');
+            advancedConfig.classList.toggle('hidden');
+            
+            // 旋转图标
+            if (advancedConfig.classList.contains('hidden')) {
+                icon.style.transform = 'rotate(0deg)';
+            } else {
+                icon.style.transform = 'rotate(180deg)';
+            }
+        }
+
+        // 显示加载状态
+        function showLoading(text, subtext) {
+            loadingText.textContent = text || '正在处理...';
+            loadingSubtext.textContent = subtext || '请稍候...';
+            loadingOverlay.classList.remove('hidden');
+        }
+
+        // 隐藏加载状态
+        function hideLoading() {
+            loadingOverlay.classList.add('hidden');
+        }
+
+        // 显示通知
+        function showNotification(title, message, type = 'info') {
+            notificationTitle.textContent = title;
+            notificationMessage.textContent = message;
+            
+            // 设置图标和颜色
+            let iconClass = 'fa-info-circle text-primary';
+            if (type === 'success') iconClass = 'fa-check-circle text-green-500';
+            else if (type === 'error') iconClass = 'fa-exclamation-circle text-red-500';
+            else if (type === 'warning') iconClass = 'fa-exclamation-triangle text-yellow-500';
+            
+            notificationIcon.innerHTML = `<i class="${iconClass} text-xl"></i>`;
+            
+            // 显示通知
+            notification.classList.remove('translate-y-20', 'opacity-0');
+            notification.classList.add('translate-y-0', 'opacity-100');
+            
+            // 3秒后自动隐藏
+            setTimeout(hideNotification, 5000);
+        }
+
+        // 隐藏通知
+        function hideNotification() {
+            notification.classList.remove('translate-y-0', 'opacity-100');
+            notification.classList.add('translate-y-20', 'opacity-0');
+        }
+
+        // HTML转义函数
+        function escapeHTML(str) {
+            if (!str) return '';
+            return str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;')
+                .replace(/\n/g, '<br>');
+        }
+
+        // 监听页面关闭事件，停止所有任务
+        window.addEventListener('beforeunload', () => {
+            if (currentTaskId && captureInterval) {
+                // 尝试停止抓包任务
+                fetch(`${API_BASE_URL}/capture/stop/${currentTaskId}`, {
+                    method: 'POST',
+                    keepalive: true
+                });
+            }
+        });
+    </script>
+</body>
+</html>
