@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 配置base标签以支持客户端路由重写 -->
+    <base href="/">
     <title>HTTP数据包捕获工具</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -360,6 +362,12 @@
         let packetRateLabels = [];
         let lastPacketCount = 0;
         let startTime = null;
+        let API_BASE_URL = '';
+        let wsBaseUrl = '';
+        let ws = null;
+        let wsReconnectAttempts = 0;
+        let wsMaxReconnectAttempts = 5;
+        let wsReconnectInterval = 1000;
 
         // DOM元素
         const deviceSelect = document.getElementById('device-select');
@@ -399,20 +407,85 @@
         const devicesLoading = document.getElementById('devices-loading');
         const devicesError = document.getElementById('devices-error');
 
-        // API基础URL
-        const API_BASE_URL = 'http://localhost:8080';
-
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
-            // 加载设备列表
-            loadDevices();
-            // 初始化图表
-            initChart();
-            // 绑定事件监听
-            bindEvents();
-            // 检查API连接状态
-            checkApiConnection();
+            // 获取服务器IP
+            getServerIp();
         });
+
+        // 获取服务器IP地址
+        function getServerIp() {
+            // 使用当前页面的主机地址，与host保持一致
+            const currentHost = window.location.hostname;
+            const currentPort = window.location.port || '8080';
+            
+            // 设置API_BASE_URL为当前页面的主机地址
+            API_BASE_URL = `http://${currentHost}:${currentPort}`;
+            // 设置WebSocket的base URL，使用ws协议
+            wsBaseUrl = `ws://${currentHost}:${currentPort}`;
+            
+            console.log('使用与host相同的IP地址:', API_BASE_URL);
+            console.log('WebSocket Base URL:', wsBaseUrl);
+            
+            // 直接继续初始化流程
+            initializeApp();
+        }
+
+        // 初始化应用
+        function initializeApp() {
+            // 先检查是否有正在运行的任务
+            checkForRunningTask()
+                .then(() => {
+                    // 加载设备列表
+                    loadDevices();
+                    // 初始化图表
+                    initChart();
+                    // 绑定事件监听
+                    bindEvents();
+                    // 检查API连接状态
+                    checkApiConnection();
+                })
+                .catch(error => {
+                    console.error('检查运行中任务失败:', error);
+                    // 即使检查失败，也要继续初始化其他功能
+                    loadDevices();
+                    initChart();
+                    bindEvents();
+                    checkApiConnection();
+                });
+        }
+
+        // 检查是否有正在运行的任务
+        function checkForRunningTask() {
+            return fetch(`${API_BASE_URL}/capture/current`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('获取当前任务状态失败');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.running) {
+                        // 有任务在运行，恢复前端状态
+                        startTime = new Date(); // 实际应用中可能需要从服务器获取
+                        lastPacketCount = 0;
+                        packetRateData = [];
+                        packetRateLabels = [];
+
+                        // 更新UI
+                        updateTaskStatusUI();
+                        startCaptureBtn.classList.add('hidden');
+                        stopCaptureBtn.classList.remove('hidden');
+                        deviceSelect.disabled = true;
+
+                        // 开始定期获取结果
+                        startPollingResults();
+
+                        // 显示通知
+                        showNotification('提示', '检测到正在运行的抓包任务，已自动恢复', 'info');
+                    }
+                });
+        }
 
         // 绑定事件监听
         function bindEvents() {
@@ -543,12 +616,11 @@
                     // 隐藏加载状态
                     hideLoading();
 
-                    // 保存任务ID
-                    currentTaskId = data.task_id;
-                    startTime = new Date();
-                    lastPacketCount = 0;
-                    packetRateData = [];
-                    packetRateLabels = [];
+                    // 单任务模式不需要保存任务ID
+            startTime = new Date();
+            lastPacketCount = 0;
+            packetRateData = [];
+            packetRateLabels = [];
 
                     // 更新UI
                     updateTaskStatusUI();
@@ -559,8 +631,8 @@
                     // 显示成功通知
                     showNotification('成功', '抓包任务已成功启动', 'success');
 
-                    // 开始定期获取结果
-                    startPollingResults();
+                    // 建立WebSocket连接以接收实时数据
+                    connectWebSocket();
                 })
                 .catch(error => {
                     // 隐藏加载状态
@@ -573,13 +645,11 @@
 
         // 停止抓包
         function stopCapture() {
-            if (!currentTaskId) return;
-
             // 显示加载状态
             showLoading('正在停止抓包', '正在关闭网卡设备并保存结果...');
 
             // 发送请求
-            fetch(`${API_BASE_URL}/capture/stop/${currentTaskId}`, {
+            fetch(`${API_BASE_URL}/capture/stop`, {
                 method: 'POST'
             })
                 .then(response => {
@@ -592,8 +662,10 @@
                     // 隐藏加载状态
                     hideLoading();
 
-                    // 停止轮询
+                    // 停止轮询（向后兼容）
                     stopPollingResults();
+                    // 关闭WebSocket连接
+                    closeWebSocket();
 
                     // 更新UI
                     runningStatusDisplay.innerHTML = '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">已停止</span>';
@@ -627,8 +699,10 @@
             showNotification('提示', '抓包结果已清空', 'info');
         }
 
-        // 开始轮询结果
+        // 开始轮询结果（向后兼容方案）
         function startPollingResults() {
+            console.log('启动轮询结果（WebSocket连接不可用时的备用方案）');
+            
             // 立即获取一次结果
             fetchCaptureResults();
             
@@ -646,9 +720,7 @@
 
         // 获取抓包结果
         function fetchCaptureResults() {
-            if (!currentTaskId) return;
-
-            fetch(`${API_BASE_URL}/capture/results/${currentTaskId}`)
+            fetch(`${API_BASE_URL}/capture/results`)
                 .then(response => {
                     if (!response.ok) {
                         throw new Error('获取抓包结果失败');
@@ -1087,12 +1159,237 @@
         window.addEventListener('beforeunload', () => {
             if (currentTaskId && captureInterval) {
                 // 尝试停止抓包任务
-                fetch(`${API_BASE_URL}/capture/stop/${currentTaskId}`, {
+                fetch(`${API_BASE_URL}/capture/stop`, {
                     method: 'POST',
                     keepalive: true
                 });
             }
+            // 关闭WebSocket连接
+            closeWebSocket();
         });
+
+        // WebSocket连接函数
+        function connectWebSocket() {
+            // 如果已经有连接，先关闭
+            if (ws) {
+                closeWebSocket();
+            }
+
+            // 构建WebSocket连接URL
+            const wsUrl = `${wsBaseUrl}/ws/capture`;
+            
+            try {
+                // 创建WebSocket连接
+                ws = new WebSocket(wsUrl);
+                
+                // 连接打开事件
+                ws.onopen = function() {
+                    console.log('WebSocket连接已建立');
+                    wsReconnectAttempts = 0; // 重置重连计数器
+                    
+                    // 更新API状态显示
+                    updateApiStatus(true);
+                };
+                
+                // 消息接收事件
+                ws.onmessage = handleWebSocketMessage;
+                
+                // 连接关闭事件
+                ws.onclose = handleWebSocketClose;
+                
+                // 错误事件
+                ws.onerror = handleWebSocketError;
+            } catch (error) {
+                console.error('WebSocket连接创建失败:', error);
+                // 尝试重连
+                reconnectWebSocket();
+            }
+        }
+        
+        // 关闭WebSocket连接
+        function closeWebSocket() {
+            if (ws) {
+                ws.onclose = null; // 防止触发重连
+                ws.close();
+                ws = null;
+                console.log('WebSocket连接已关闭');
+            }
+        }
+        
+        // 处理WebSocket消息
+        function handleWebSocketMessage(event) {
+            try {
+                // 解析接收到的JSON数据
+                const data = JSON.parse(event.data);
+                
+                // 根据消息类型处理
+                if (data.type === 'packet') {
+                    // 接收到新的数据包
+                    handleNewPacket(data.payload);
+                } else if (data.type === 'task_status') {
+                    // 接收到任务状态更新
+                    handleTaskStatusUpdate(data.payload);
+                }
+            } catch (error) {
+                console.error('WebSocket消息解析失败:', error);
+            }
+        }
+        
+        // 处理WebSocket关闭
+        function handleWebSocketClose(event) {
+            console.log('WebSocket连接关闭:', event.code, event.reason);
+            ws = null;
+            
+            // 如果是正常关闭，不进行重连
+            if (event.code !== 1000) {
+                // 尝试重连
+                reconnectWebSocket();
+            }
+        }
+        
+        // 处理WebSocket错误
+        function handleWebSocketError(error) {
+            console.error('WebSocket错误:', error);
+            // 尝试重连
+            reconnectWebSocket();
+        }
+        
+        // 重连WebSocket
+        function reconnectWebSocket() {
+            if (wsReconnectAttempts < wsMaxReconnectAttempts) {
+                wsReconnectAttempts++;
+                console.log(`正在尝试第 ${wsReconnectAttempts} 次重连...`);
+                
+                // 指数退避重连
+                const backoffTime = wsReconnectInterval * Math.pow(2, wsReconnectAttempts - 1);
+                
+                setTimeout(() => {
+                    connectWebSocket();
+                }, backoffTime);
+            } else {
+                console.error('已达到最大重连次数，停止重连');
+                updateApiStatus(false);
+                showNotification('错误', 'WebSocket连接失败，请刷新页面重试', 'error');
+            }
+        }
+        
+        // 处理新收到的数据包
+        function handleNewPacket(packet) {
+            // 更新数据包计数
+            const newPacketCount = parseInt(packetCountDisplay.textContent) + 1;
+            packetCountDisplay.textContent = newPacketCount.toString();
+
+            // 更新图表数据（计算捕获速率）
+            if (newPacketCount > lastPacketCount) {
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString();
+                const rate = newPacketCount - lastPacketCount;
+                
+                packetRateLabels.push(timeStr);
+                packetRateData.push(rate);
+                
+                // 保持数据点不超过20个
+                if (packetRateData.length > 20) {
+                    packetRateData.shift();
+                    packetRateLabels.shift();
+                }
+                
+                updateChart();
+                lastPacketCount = newPacketCount;
+            }
+
+            // 更新表格数据
+            updateResultsTableWithNewPacket(packet);
+        }
+        
+        // 处理任务状态更新
+        function handleTaskStatusUpdate(status) {
+            if (status.running === true) {
+                // 任务已启动
+                startTime = new Date();
+                lastPacketCount = 0;
+                packetRateData = [];
+                packetRateLabels = [];
+                
+                // 更新UI
+                updateTaskStatusUI();
+                startCaptureBtn.classList.add('hidden');
+                stopCaptureBtn.classList.remove('hidden');
+                deviceSelect.disabled = true;
+                
+                // 显示通知
+                if (status.message) {
+                    showNotification('提示', status.message, 'success');
+                }
+            } else if (status.running === false) {
+                // 任务已停止
+                runningStatusDisplay.innerHTML = '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">已停止</span>';
+                startCaptureBtn.classList.remove('hidden');
+                stopCaptureBtn.classList.add('hidden');
+                deviceSelect.disabled = false;
+                
+                // 显示通知
+                if (status.message) {
+                    let notificationMessage = status.message;
+                    if (status.captured_packets !== undefined) {
+                        notificationMessage += `，共捕获 ${status.captured_packets} 个数据包`;
+                    }
+                    showNotification('提示', notificationMessage, 'success');
+                }
+            }
+        }
+        
+        // 用新数据包更新结果表格
+        function updateResultsTableWithNewPacket(packet) {
+            // 隐藏空状态
+            emptyResults.classList.add('hidden');
+            
+            // 创建新行
+            const row = document.createElement('tr');
+            row.className = 'hover:bg-gray-50 transition-colors';
+            row.dataset.packetData = JSON.stringify(packet);
+            
+            // 格式化时间戳
+            const timestamp = new Date(packet.timestamp).toLocaleString('zh-CN');
+            
+            // 提取请求方法
+            const requestMethod = packet.request_line.split(' ')[0] || '';
+            const requestPath = packet.path || '';
+            
+            // 根据请求方法设置不同颜色
+            let methodClass = 'bg-gray-100 text-gray-800';
+            if (requestMethod === 'GET') methodClass = 'bg-blue-100 text-blue-800';
+            else if (requestMethod === 'POST') methodClass = 'bg-green-100 text-green-800';
+            else if (requestMethod === 'PUT') methodClass = 'bg-yellow-100 text-yellow-800';
+            else if (requestMethod === 'DELETE') methodClass = 'bg-red-100 text-red-800';
+            
+            row.innerHTML = `
+                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${timestamp}</td>
+                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${packet.source_ip}:${packet.source_port}</td>
+                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${packet.dest_ip}:${packet.dest_port}</td>
+                <td class="px-4 py-3 text-sm">
+                    <div class="flex items-center space-x-2">
+                        <span class="inline-block px-2 py-0.5 rounded text-xs font-medium ${methodClass}">${requestMethod}</span>
+                        <span class="text-gray-700 truncate max-w-[200px]">${requestPath}</span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${packet.host}</td>
+                <td class="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                    <button class="text-primary hover:text-primary/80 transition-colors view-details-btn" data-packet='${escapeHTML(JSON.stringify(packet))}'>
+                        查看
+                    </button>
+                </td>
+            `;
+            
+            // 添加到表格顶部（最新的数据包显示在最前面）
+            resultsTableBody.insertBefore(row, resultsTableBody.firstChild);
+            
+            // 添加查看详情事件监听
+            const viewDetailsBtn = row.querySelector('.view-details-btn');
+            viewDetailsBtn.addEventListener('click', function() {
+                showPacketDetails(JSON.parse(this.getAttribute('data-packet')));
+            });
+        }
     </script>
 </body>
 </html>

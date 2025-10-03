@@ -58,3 +58,4 @@ dist/
 *.tmp
 *.temp
 .cache/
+output/
